@@ -1,40 +1,29 @@
 
 
-/* Import Google Font FIRST */
-@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap");
-
-/* Tailwind core layers */
-/* @tailwind base;
+@tailwind base;
 @tailwind components;
-@tailwind utilities; */
+@tailwind utilities;
 
-/* Global styles */
-html, body {
-  font-family: 'Poppins', sans-serif;
-  background: linear-gradient(135deg, #0f172a, #312e81);
-  color: white;
-  min-height: 100vh;
-  margin: 0;
-  padding: 0;
-}
+@layer base {
+  html {
+    font-family: Inter, system-ui, sans-serif;
+  }
 
-/* Optional light/dark theme variables */
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    @apply min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-800;
   }
 }
 
-/* Apply the theme colors */
-body {
-  background: var(--background);
-  color: var(--foreground);
+/* Custom animation for microphone button pulse */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: .85;
+    transform: scale(1.05);
+  }
 }
 
 

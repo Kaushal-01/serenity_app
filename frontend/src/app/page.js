@@ -1,27 +1,80 @@
 "use client";
 import { useState } from "react";
 import axios from "axios";
+import MusicPlayer from "@/components/MusicPlayer";
+
+// Utility function to convert AudioBuffer to WAV format
+function audioBufferToWav(buffer, numberOfChannels, sampleRate) {
+  const length = buffer.length * numberOfChannels * 2;
+  const view = new DataView(new ArrayBuffer(44 + length));
+
+  // Write WAV header
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + length, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numberOfChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numberOfChannels * 2, true);
+  view.setUint16(32, numberOfChannels * 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, length, true);
+
+  // Write audio data
+  const channelData = new Float32Array(buffer.length);
+  buffer.copyFromChannel(channelData, 0, 0);
+  let offset = 44;
+  for (let i = 0; i < buffer.length; i++) {
+    const sample = Math.max(-1, Math.min(1, channelData[i]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+    offset += 2;
+  }
+
+  return view.buffer;
+}
+
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+}
 
 export default function Home() {
-  const API_URL = process.env.NEXT_PUBLIC_API_URL;
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
   const [username, setUsername] = useState("");
   const [userId, setUserId] = useState(null);
   const [file, setFile] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [mediaRecorderRef, setMediaRecorderRef] = useState(null);
+  const [streamRef, setStreamRef] = useState(null);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  // 🧾 Login
+  // 🧾 Login with debounce and loading state
   const handleLogin = async () => {
     if (!username.trim()) return alert("Enter a username first!");
-    const formData = new FormData();
-    formData.append("username", username);
+    if (loginLoading) return; // Prevent multiple clicks
+    
+    setLoginLoading(true);
+    setError(null);
+    
     try {
+      const formData = new FormData();
+      formData.append("username", username);
       const res = await axios.post(`${API_URL}/user/login`, formData);
       setUserId(res.data.user_id);
+      localStorage.setItem('userId', res.data.user_id); // Cache user ID
     } catch (e) {
       console.error(e);
-      alert("Login failed!");
+      setError("Login failed. Please try again.");
+    } finally {
+      setLoginLoading(false);
     }
   };
 
@@ -46,22 +99,102 @@ export default function Home() {
     }
   };
 
-  // 🎙 Record Live via FastAPI
-  const handleRecordLive = async () => {
+  // 🎙 Record Live via Browser
+  const handleRecordToggle = async () => {
     if (!userId) return alert("Please login first!");
-    setRecording(true);
-    setResult(null);
 
+    // If already recording, stop it
+    if (recording) {
+      if (mediaRecorderRef?.state === 'recording') {
+        mediaRecorderRef.stop();
+      }
+      return;
+    }
+
+    // Start new recording
     try {
-      const res = await axios.get(`${API_URL}/recognize/live`, {
-        params: { user_id: userId },
+      setResult(null);
+      setRecordingTime(0);
+      
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: { 
+          sampleRate: 22050,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true
+        } 
       });
-      setResult(res.data);
+      setStreamRef(stream);
+      
+      const audioChunks = [];
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 128000
+      });
+      setMediaRecorderRef(mediaRecorder);
+
+      // Set up recording handlers
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunks.push(event.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        // Convert webm audio to wav format
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        
+        // Create WAV file
+        const numberOfChannels = 1;
+        const sampleRate = 22050;
+        const wavBuffer = audioBufferToWav(audioBuffer, numberOfChannels, sampleRate);
+        const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
+        
+        const formData = new FormData();
+        formData.append('audio', wavBlob, 'recording.wav');
+        formData.append('user_id', userId);
+        formData.append('emotion', 'neutral');
+
+        try {
+          setLoading(true);
+          const res = await axios.post(`${API_URL}/recognize`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          setResult(res.data);
+        } catch (err) {
+          console.error(err);
+          alert('Recognition failed.');
+        } finally {
+          setLoading(false);
+          setRecording(false);
+          setRecordingTime(0);
+          stream.getTracks().forEach(track => track.stop());
+          setStreamRef(null);
+          setMediaRecorderRef(null);
+        }
+      };
+
+      // Start recording
+      mediaRecorder.start();
+      setRecording(true);
+
+      // Update recording timer
+      const timer = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+
+      // Clean up timer when recording stops
+      mediaRecorder.addEventListener('stop', () => {
+        clearInterval(timer);
+      });
+
     } catch (err) {
       console.error(err);
-      alert("Recording or recognition failed.");
-    } finally {
+      alert("Could not access microphone. Please grant permission.");
       setRecording(false);
+      setRecordingTime(0);
     }
   };
 
@@ -86,10 +219,18 @@ export default function Home() {
           />
           <button
             onClick={handleLogin}
-            className="w-full mt-3 py-2 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-semibold hover:scale-105 transition"
+            disabled={loginLoading}
+            className={`w-full mt-3 py-2 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-semibold transition 
+              ${!loginLoading && !userId ? 'hover:scale-105' : ''} 
+              ${loginLoading ? 'opacity-75 cursor-not-allowed' : ''}`}
           >
-            {userId ? "✅ Logged In" : "Login"}
+            {loginLoading ? "Logging in..." : userId ? "✅ Logged In" : "Login"}
           </button>
+          {error && (
+            <div className="mt-2 text-red-400 text-sm text-center">
+              {error}
+            </div>
+          )}
         </div>
 
         {/* Upload Section */}
@@ -112,32 +253,108 @@ export default function Home() {
           </button>
         </div>
 
-        {/* 🎙 Record Live Button */}
+        {/* 🎙 Record Live Section */}
         <div className="mb-6">
-          <button
-            onClick={handleRecordLive}
-            disabled={recording}
-            className={`w-full py-2 rounded-lg text-white font-semibold transition ${
-              recording
-                ? "bg-red-600 animate-pulse"
-                : "bg-gradient-to-r from-pink-500 to-red-500 hover:scale-105"
-            }`}
-          >
-            {recording ? "🎙 Recording (7s)..." : "🎙 Record from Mic"}
-          </button>
+          <div className="flex flex-col items-center space-y-2">
+            <button
+              onClick={handleRecordToggle}
+              disabled={loading}
+              className={`w-16 h-16 rounded-full flex items-center justify-center transition-all transform hover:scale-110 ${
+                recording 
+                  ? "bg-red-600 animate-pulse" 
+                  : "bg-gradient-to-r from-pink-500 to-red-500"
+              }`}
+            >
+              <span className="text-2xl">🎙️</span>
+            </button>
+            
+            {recording && (
+              <div className="text-white text-center">
+                <div className="font-semibold">Recording... ({recordingTime}s)</div>
+                <div className="text-sm text-gray-300">Click mic to stop</div>
+              </div>
+            )}
+            {!recording && !loading && (
+              <div className="text-sm text-gray-300">
+                Click mic to start recording
+              </div>
+            )}
+            {loading && (
+              <div className="text-white text-center">
+                Processing recording...
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Result Display */}
-        {result && (
-          <div className="bg-white/10 p-4 rounded-lg border border-white/20">
-            <h3 className="text-xl font-semibold text-indigo-300 mb-2">
-              Recognition Result
-            </h3>
-            <pre className="text-gray-100 text-sm overflow-x-auto">
-              {JSON.stringify(result, null, 2)}
-            </pre>
-          </div>
-        )}
+        <div className="mt-6">
+          {loading && (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+              <div className="text-indigo-300">Processing audio...</div>
+            </div>
+          )}
+
+          {!loading && result && (
+            <div className="bg-white/10 p-4 rounded-lg border border-white/20">
+              {/* Main Match */}
+              {result.status === "success" ? (
+                <>
+                  <div className="mb-4">
+                    <h3 className="text-xl font-semibold text-indigo-300 mb-2">
+                      Recognized Song
+                    </h3>
+                    <div className="bg-white/5 p-3 rounded">
+                      <div className="text-lg text-white">{result.song}</div>
+                      <div className="text-sm text-gray-400 mt-1">
+                        Confidence: {Math.round(result.confidence * 100)}%
+                        <span className="mx-2">•</span>
+                        Votes: {result.votes}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Similar Songs */}
+                  {result.similar_songs && result.similar_songs.length > 0 && (
+                    <div>
+                      <h4 className="text-lg font-semibold text-purple-300 mb-2">
+                        Similar Songs
+                      </h4>
+                      <div className="space-y-2">
+                        {result.similar_songs.map((song, index) => (
+                          <div key={index} className="bg-white/5 p-2 rounded">
+                            <div className="text-white">{song.song}</div>
+                            <div className="text-sm text-gray-400">
+                              Confidence: {Math.round(song.confidence * 100)}%
+                              <span className="mx-2">•</span>
+                              Votes: {song.votes}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Music Player */}
+                  <MusicPlayer recognizedSong={result} />
+
+                  {/* Processing Time */}
+                  <div className="text-xs text-gray-500 mt-3">
+                    Processing time: {result.processing_time}s
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-4">
+                  <div className="text-yellow-400 mb-2">⚠️ No Match Found</div>
+                  <div className="text-sm text-gray-400">
+                    Try recording again or choose a different audio sample
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         <p className="text-center text-gray-400 mt-6 text-sm">
           Made with 💜 by Kaushal

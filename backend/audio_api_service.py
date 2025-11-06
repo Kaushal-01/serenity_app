@@ -96,13 +96,27 @@ async def recognize_uploaded(
         end = time.time()
 
         if result:
-            log_recognition(user_id, result["song"], emotion)
+            # Get the top matched song and its details
+            primary_match = result[0]
+            log_recognition(user_id, primary_match["song"], emotion)
+            
+            # Include similar songs if available
+            similar_songs = result[1:3] if len(result) > 1 else []  # Get next 2 songs
+            
             return {
                 "status": "success",
-                "song": result["song"],
-                "votes": result["votes"],
-                "offset": result["offset"],
-                "processing_time": round(end - start, 2)
+                "song": primary_match["song"],
+                "votes": primary_match["votes"],
+                "confidence": primary_match["confidence"],
+                "offset": primary_match["offset"],
+                "processing_time": round(end - start, 2),
+                "similar_songs": [
+                    {
+                        "song": song["song"],
+                        "votes": song["votes"],
+                        "confidence": song["confidence"]
+                    } for song in similar_songs
+                ]
             }
         else:
             return {"status": "no_match", "message": "No song match found."}
@@ -111,21 +125,8 @@ async def recognize_uploaded(
         return {"status": "error", "message": str(e)}
 
 
-# 🎙️ LIVE MIC RECOGNITION
-@app.get("/recognize/live")
-def recognize_live(user_id: int = Query(...)):
-    duration = 7
-    print("🎙️ Recording via mic...")
-    audio = sd.rec(int(duration * 22050), samplerate=22050, channels=1, dtype='float32')
-    sd.wait()
-    y = np.array(audio).flatten()
-
-    result = recognize_audio(y, DB)
-    if result:
-        log_recognition(user_id, result["song"])
-        return {"status": "success", "song": result["song"], "votes": result["votes"]}
-    else:
-        return {"status": "no_match"}
+# Note: Live recognition now handled through the /recognize endpoint with uploaded audio
+# The /recognize/live endpoint is removed as recording happens in the browser
 
 
 # 👤 USER LOGIN

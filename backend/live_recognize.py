@@ -16,13 +16,17 @@ from collections import defaultdict, Counter
 SR = 22050
 N_FFT = 2048
 HOP_LENGTH = 512
-PEAK_NEIGHBORHOOD = (15, 15)
-FAN_VALUE = 20
-FREQ_BIN_IGNORE = 3
+PEAK_NEIGHBORHOOD = (10, 10)  # Reduced from (15, 15) to detect more peaks
+FAN_VALUE = 25  # Increased from 20 to generate more hash points
+FREQ_BIN_IGNORE = 2  # Reduced from 3 to include more low frequency content
 DT_MAX = 200
 DB_PATH = "fingerprints_db.pkl"
-AMP_MIN = -25
+AMP_MIN = -35  # Lowered from -25 to be more sensitive
 RECORD_DURATION = 7  # seconds
+
+# Adaptive threshold settings
+ADAPTIVE_PERCENTILE = 75  # Lowered from 85 to be more sensitive to quieter sounds
+MIN_PEAK_AMPLITUDE = -45  # Minimum amplitude for a peak to be considered
 
 # ==== LOAD DATABASE (once) ====
 print("📂 Loading fingerprint database...")
@@ -35,18 +39,36 @@ print(f"✅ Loaded {len(DB)} fingerprints for {len(SONG_LIST)} songs.")
 
 # ==== PEAK + HASH FUNCTIONS ====
 def stft_peaks(S_db, adaptive=True):
-    """Detect spectral peaks using adaptive thresholding."""
+    """Detect spectral peaks using adaptive thresholding with enhanced sensitivity."""
     footprint = np.ones(PEAK_NEIGHBORHOOD)
     local_max = maximum_filter(S_db, footprint=footprint) == S_db
+    
     if adaptive:
-        adaptive_thresh = np.percentile(S_db, 85)
-        detected_peaks = np.where(local_max & (S_db >= adaptive_thresh))
+        # Use more sensitive adaptive thresholding
+        adaptive_thresh = np.percentile(S_db, ADAPTIVE_PERCENTILE)
+        # Ensure threshold doesn't go below minimum peak amplitude
+        adaptive_thresh = max(adaptive_thresh, MIN_PEAK_AMPLITUDE)
+        # Use a combination of adaptive and minimum thresholds
+        detected_peaks = np.where(
+            local_max & 
+            (S_db >= adaptive_thresh) &
+            (S_db >= MIN_PEAK_AMPLITUDE)
+        )
     else:
         detected_peaks = np.where(local_max & (S_db >= AMP_MIN))
+    
     freqs = detected_peaks[0]
     times = detected_peaks[1]
     mask = freqs >= FREQ_BIN_IGNORE
-    return list(zip(freqs[mask], times[mask]))
+    
+    # Additional filtering for stronger peaks
+    peaks = list(zip(freqs[mask], times[mask]))
+    if len(peaks) > 1000:  # If too many peaks, keep only the strongest ones
+        peak_values = [S_db[f, t] for f, t in peaks]
+        strongest_indices = np.argsort(peak_values)[-1000:]  # Keep top 1000 peaks
+        peaks = [peaks[i] for i in strongest_indices]
+    
+    return peaks
 
 
 def generate_hashes(peaks, fan_value=FAN_VALUE):
@@ -69,10 +91,22 @@ def generate_hashes(peaks, fan_value=FAN_VALUE):
 
 # ==== CORE RECOGNITION ====
 def recognize_audio(y, db):
-    """Recognize song directly from numpy audio array."""
-    S = np.abs(librosa.stft(y, n_fft=N_FFT, hop_length=HOP_LENGTH))
+    """Recognize song directly from numpy audio array with enhanced sensitivity."""
+    # Normalize audio
+    y = librosa.util.normalize(y)
+    
+    # Apply pre-emphasis to enhance high frequencies
+    y_emph = np.append(y[0], y[1:] - 0.97 * y[:-1])
+    
+    # Generate STFT
+    S = np.abs(librosa.stft(y_emph, n_fft=N_FFT, hop_length=HOP_LENGTH))
     S_db = librosa.amplitude_to_db(S + 1e-6, ref=np.max)
-    peaks = stft_peaks(S_db, adaptive=True)
+    
+    # Get peaks with both adaptive and fixed thresholds
+    peaks_adaptive = stft_peaks(S_db, adaptive=True)
+    peaks_fixed = stft_peaks(S_db, adaptive=False)
+    peaks = list(set(peaks_adaptive + peaks_fixed))  # Combine unique peaks
+    
     q_hashes = generate_hashes(peaks)
 
     if not q_hashes:
@@ -92,12 +126,30 @@ def recognize_audio(y, db):
 
     results = []
     for song_id, offsets in votes.items():
-        best_offset, best_votes = Counter(int(round(o)) for o in offsets).most_common(1)[0]
-        results.append((song_id, best_votes, best_offset))
+        offset_counts = Counter(int(round(o)) for o in offsets)
+        # Get top 3 offsets and sum their votes for more robust matching
+        top_offsets = offset_counts.most_common(3)
+        total_votes = sum(count for _, count in top_offsets)
+        best_offset = top_offsets[0][0]  # Use the most common offset
+        
+        # Calculate confidence score (normalized between 0 and 1)
+        confidence = total_votes / len(q_hashes) if q_hashes else 0
+        results.append((song_id, total_votes, best_offset, confidence))
 
+    # Sort by votes and get top 3 results
     results.sort(key=lambda x: x[1], reverse=True)
-    top = results[0]
-    return {"song": top[0], "votes": top[1], "offset": top[2]}
+    top_matches = results[:3]
+    
+    # Convert to list of dictionaries with song info
+    return [
+        {
+            "song": match[0],
+            "votes": match[1],
+            "offset": match[2],
+            "confidence": match[3]
+        }
+        for match in top_matches
+    ]
 
 
 # ==== AUDIO LOADER (Unified Input Handler) ====
