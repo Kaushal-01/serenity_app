@@ -44,17 +44,6 @@ export default function AdminPage() {
     });
   };
 
-  // Evaluate recognition accuracy
-  const evaluate = async () => {
-    await confirmAction(
-      "Run evaluation? This will test all songs and may take a few minutes.",
-      async () => {
-        const res = await axios.get(`${API_URL}/evaluate`, { params: { admin_key: "secret123" } });
-        setLog(JSON.stringify(res.data, null, 2));
-      }
-    );
-  };
-
   // Delete a song
   const deleteSong = async () => {
     const name = prompt("Enter the exact song name to delete (e.g., my_song.mp3):");
@@ -97,13 +86,6 @@ export default function AdminPage() {
           {loading ? "Loading..." : "List Songs"}
         </button>
 
-        <button
-          onClick={evaluate}
-          disabled={loading}
-          className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded disabled:opacity-50"
-        >
-          {loading ? "Evaluating..." : "Evaluate Accuracy"}
-        </button>
 
         <button
           onClick={deleteSong}

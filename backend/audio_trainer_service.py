@@ -96,13 +96,6 @@ def delete_song(song_name: str = Query(...), admin_key: str = Query(...)):
         print("⚠️ Reload failed:", e)
 
     return {"status": "deleted", "song": song_name}
-
-@app.get("/evaluate")
-def evaluate_db(admin_key: str = Query(...)):
-    if admin_key != ADMIN_KEY:
-        return JSONResponse(status_code=403, content={"error": "Unauthorized"})
-
-    db, songs = load_db()
     if not songs:
         return {"error": "No songs in DB"}
 
