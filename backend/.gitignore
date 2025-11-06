@@ -1,0 +1,5 @@
+songs
+test
+*.db
+*.pkl
+__pycache__

@@ -1,0 +1,41 @@
+
+
+/* Import Google Font FIRST */
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap");
+
+/* Tailwind core layers */
+/* @tailwind base;
+@tailwind components;
+@tailwind utilities; */
+
+/* Global styles */
+html, body {
+  font-family: 'Poppins', sans-serif;
+  background: linear-gradient(135deg, #0f172a, #312e81);
+  color: white;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+/* Optional light/dark theme variables */
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+/* Apply the theme colors */
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+
+
