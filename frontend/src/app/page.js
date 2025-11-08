@@ -116,21 +116,22 @@ export default function Home() {
       setResult(null);
       setRecordingTime(0);
       
-      // Request microphone access
+      // Request microphone access with optimal settings for recognition
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: { 
-          sampleRate: 22050,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true
+          sampleRate: 44100, // Higher initial sample rate for better quality
+          channelCount: 1,   // Mono audio
+          echoCancellation: false, // Disable audio processing that might affect fingerprinting
+          noiseSuppression: false,
+          autoGainControl: false
         } 
       });
       setStreamRef(stream);
       
       const audioChunks = [];
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus',
-        audioBitsPerSecond: 128000
+        mimeType: 'audio/webm',  // Use raw WebM without specifying codec
+        audioBitsPerSecond: 256000 // Higher bitrate for better quality
       });
       setMediaRecorderRef(mediaRecorder);
 
@@ -140,16 +141,28 @@ export default function Home() {
       };
 
       mediaRecorder.onstop = async () => {
-        // Convert webm audio to wav format
+        // Process recorded audio with improved settings
         const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: 22050 // Match the backend's expected sample rate
+        });
         const arrayBuffer = await audioBlob.arrayBuffer();
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
         
-        // Create WAV file
-        const numberOfChannels = 1;
-        const sampleRate = 22050;
-        const wavBuffer = audioBufferToWav(audioBuffer, numberOfChannels, sampleRate);
+        // Ensure audio quality with proper resampling
+        const offlineContext = new OfflineAudioContext({
+          numberOfChannels: 1,
+          length: Math.ceil(audioBuffer.duration * 22050),
+          sampleRate: 22050
+        });
+        
+        const source = offlineContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(offlineContext.destination);
+        source.start();
+        
+        const renderedBuffer = await offlineContext.startRendering();
+        const wavBuffer = audioBufferToWav(renderedBuffer, 1, 22050);
         const wavBlob = new Blob([wavBuffer], { type: 'audio/wav' });
         
         const formData = new FormData();
