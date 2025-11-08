@@ -14,19 +14,19 @@ from collections import defaultdict, Counter
 
 # ==== CONFIG ====
 SR = 22050
-N_FFT = 2048
+N_FFT = 1024          # Matched with training
 HOP_LENGTH = 512
-PEAK_NEIGHBORHOOD = (10, 10)  # Reduced from (15, 15) to detect more peaks
-FAN_VALUE = 25  # Increased from 20 to generate more hash points
-FREQ_BIN_IGNORE = 2  # Reduced from 3 to include more low frequency content
+PEAK_NEIGHBORHOOD = (10, 10)
+FAN_VALUE = 10        # Matched with training
+FREQ_BIN_IGNORE = 3   # Matched with training
 DT_MAX = 200
 DB_PATH = "fingerprints_db.pkl"
-AMP_MIN = -35  # Lowered from -25 to be more sensitive
+AMP_MIN = -25         # Matched with training
 RECORD_DURATION = 7  # seconds
 
 # Adaptive threshold settings
-ADAPTIVE_PERCENTILE = 75  # Lowered from 85 to be more sensitive to quieter sounds
-MIN_PEAK_AMPLITUDE = -45  # Minimum amplitude for a peak to be considered
+ADAPTIVE_PERCENTILE = 85  # Matched with training
+MIN_PEAK_AMPLITUDE = -25  # Matched with training AMP_MIN
 
 # ==== LOAD DATABASE (once) ====
 print("📂 Loading fingerprint database...")
